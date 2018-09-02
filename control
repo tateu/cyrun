@@ -1,0 +1,10 @@
+Package: net.tateu.cyrun
+Name: cyrun
+Depends: firmware (>=11.0), mobilesubstrate, applist, net.tateu.cycriptlistenertweak, Cycript
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Cycript Loader for iOS 11.
+Maintainer: tateu (Josh Harris) <tateu@tateu.net>
+Author: tateu (Josh Harris) <tateu@tateu.net>
+Section: System
+Tag: role::developer

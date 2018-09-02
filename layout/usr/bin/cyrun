@@ -1,0 +1,157 @@
+#!/bin/bash
+
+POSITIONAL=()
+while [[ $# -gt 0 ]]
+do
+	key="$1"
+	case $key in
+		-b|--bundle)
+		bundleIdentifier="$2"
+		shift # past argument
+		shift # past value
+		;;
+		-n|--name)
+		applicationName="$2"
+		shift
+		shift
+		;;
+		-e|--enable)
+		enable=YES
+		shift # past argument
+		;;
+		-d|--disable)
+		disable=YES
+		shift
+		;;
+		-f|--force)
+		force=YES
+		shift
+		;;
+		-h|--help)
+		help=YES
+		shift
+		;;
+		-s|--sign)
+		sign=YES
+		shift
+		;;
+		*)    # unknown option
+		POSITIONAL+=("$1") # save it in an array for later
+		shift # past argument
+		;;
+	esac
+done
+
+set -- "${POSITIONAL[@]}" # restore positional parameters
+
+if [ "$sign" == "YES" ]; then
+	`cycript -h`
+	retVal=$?
+
+	if [ "$retVal" == "127" ] ; then
+		echo "ERROR - The Cycript binary does not appear to be installed"
+		exit 0
+	fi
+
+	if [ "$retVal" != "137" ] && [ "$force" != "YES" ]; then
+		echo "The Cycript binary appears to have already been signed correctly"
+		echo "If you would like to force it to be resigned, run this again with"
+		echo "    cyrun -s -f"
+		exit 0
+	fi
+
+	read -p "Would you like to sign the Cycript binaries for the Electra JB (y or n)? " -n 1 -r
+	echo
+	if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+		echo "Ok, cancelled"
+		exit 0
+	fi
+
+	cat > /tmp/cyrun_ent.xml << EOF
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>platform-application</key>
+	<true/>
+	<key>com.apple.private.skip-library-validation</key>
+	<true/>
+	<key>run-unsigned-code</key>
+	<true/>
+	<key>get-task-allow</key>
+	<true/>
+</dict>
+</plist>
+EOF
+
+	# cp -a /usr/bin/cycript /usr/bin/cycript.bak
+	# cp -a /usr/lib/libcycript.dylib /usr/lib/libcycript.dylib.bak
+
+	cp -a /usr/bin/cycript /tmp/
+	cp -a /usr/lib/libcycript.dylib /tmp/
+	rm -rf /usr/bin/cycript
+	rm -rf /usr/lib/libcycript.dylib
+	ldid -S/tmp/cyrun_ent.xml /tmp/cycript
+	ldid -S /tmp/libcycript.dylib
+	cp -a /tmp/cycript /usr/bin/
+	cp -a /tmp/libcycript.dylib /usr/lib/
+
+	exit 0
+fi
+
+if [ "$sign" == "YES" ]; then
+	netstat -na | grep LISTEN
+fi
+
+cmd="cyrun2"
+if [ "$help" == "YES" ]; then
+	enable=N
+	disable=N
+	bundleIdentifier=""
+	applicationName=""
+	cmd="$cmd -h"
+fi
+
+if [ "$bundleIdentifier" != "" ]; then
+	cmd="$cmd -b $bundleIdentifier"
+fi
+
+if [ "$applicationName" != "" ]; then
+	cmd="$cmd -n $applicationName"
+fi
+
+if [ "$enable" == "YES" ]; then
+	cmd="$cmd -e"
+fi
+
+if [ "$disable" == "YES" ]; then
+	cmd="$cmd -d"
+fi
+
+if [ "$force" == "YES" ]; then
+	cmd="$cmd -f"
+fi
+
+`$cmd`
+retVal=$?
+
+if [ "$retVal" == "0" ] && [ "$enable" == "YES" ]; then
+	cycript -r 127.0.0.1:8556
+
+	if [ "$disable" == "YES" ]; then
+		cmd="cyrun2 -d"
+
+		if [ "$bundleIdentifier" != "" ]; then
+			cmd="$cmd -b $bundleIdentifier"
+		fi
+
+		if [ "$applicationName" != "" ]; then
+			cmd="$cmd -n $applicationName"
+		fi
+
+		if [ "$force" == "YES" ]; then
+			cmd="$cmd -f"
+		fi
+
+		`$cmd`
+	fi
+fi
