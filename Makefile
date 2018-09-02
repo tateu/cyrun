@@ -15,7 +15,8 @@ include $(THEOS)/makefiles/common.mk
 
 TOOL_NAME = cyrun2
 cyrun2_FILES = main.mm
-cyrun2_PRIVATE_FRAMEWORKS = BackBoardServices
+cyrun2_FRAMEWORKS = MobileCoreServices
+cyrun2_PRIVATE_FRAMEWORKS = BackBoardServices SoftwareUpdateServices
 cyrun2_LIBRARIES = applist
 cyrun2_CODESIGN_FLAGS = -Sentitlements.xml
 

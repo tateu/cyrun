@@ -16,13 +16,11 @@ It is meant to be used alongside [cycriptListenerTweak](https://github.com/tateu
 	# download https://electrarepo64.coolstar.org/debs/ncurses_6.1_iphoneos-arm.deb
 	# download http://apt.saurik.com/debs/readline_6.0-8_iphoneos-arm.deb
 	# download http://apt.saurik.com/debs/cycript_0.9.594_iphoneos-arm.deb
-	# download http://apt.thebigboss.org/repofiles/cydia/debs2.0/applist_1.5.14_iphoneos-arm.deb
 	# download http://www.tateu.net/repo/files/net.tateu.cycriptlistenertweak_1.0.0_iphoneos-arm.deb
 	# download http://www.tateu.net/repo/files/net.tateu.cyrun_1.0.1_iphoneos-arm.deb
 	dpkg -i ncurses_6.1_iphoneos-arm.deb
 	dpkg -i readline_6.0-8_iphoneos-arm.deb
 	dpkg -i cycript_0.9.594_iphoneos-arm.deb
-	dpkg -i applist_1.5.14_iphoneos-arm.deb
 	dpkg -i net.tateu.cycriptlistenertweak_1.0.0_iphoneos-arm.deb
 	dpkg -i net.tateu.cyrun_1.0.1_iphoneos-arm.deb
 

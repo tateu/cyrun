@@ -1,8 +1,8 @@
+#include <objc/runtime.h>
 #import <signal.h>
 #import <sys/sysctl.h>
 #import <arpa/inet.h>
 #import <spawn.h>
-#import <AppList/AppList.h>
 
 typedef long BKSOpenApplicationErrorCode;
 enum {
@@ -60,7 +60,7 @@ inline BOOL isLocalPortOpen(short port)
 }
 
 // https://stackoverflow.com/questions/6610705/how-to-get-process-id-in-iphone-or-ipad
-inline int getPID(NSString *processNameSearch, NSString **actualProcessName)
+inline int getPID(NSString *processNameSearch)
 {
 	int pid = -1;
 	int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL ,0};
@@ -92,20 +92,37 @@ inline int getPID(NSString *processNameSearch, NSString **actualProcessName)
 		if (size % sizeof(struct kinfo_proc) == 0) {
 			int nprocess = size / sizeof(struct kinfo_proc);
 			if (nprocess) {
+				// char line[10];
 				for (int i = nprocess - 1; i >= 0; i--) {
 					NSString *processName = [[NSString alloc] initWithFormat:@"%s", process[i].kp_proc.p_comm];
-					// fprintf(stderr, "processName (%s)\n", [processName UTF8String]);
-					// NSString * processID = [[NSString alloc] initWithFormat:@"%d", process[i].kp_proc.p_pid];
-					// NSString * proc_CPU = [[NSString alloc] initWithFormat:@"%d", process[i].kp_proc.p_estcpu];
-					// double t = [[NSDate date] timeIntervalSince1970] - process[i].kp_proc.p_un.__p_starttime.tv_sec;
-					// NSString * proc_useTiem = [[NSString alloc] initWithFormat:@"%f",t];
 
-					if ([processName rangeOfString:processNameSearch options:NSCaseInsensitiveSearch].location != NSNotFound) {
+					if ([processName isEqualToString:processNameSearch]) {
 						pid = process[i].kp_proc.p_pid;
-						*actualProcessName = [processName copy];
 						[processName release];
 						break;
 					}
+
+					// // This is no longer needed since switching from AppList to LSApplicationWorkspace
+					// else if ([processName rangeOfString:processNameSearch options:NSCaseInsensitiveSearch].location != NSNotFound) {
+					// 	// not an exact match, so must ask the user
+					// 	// this happens when matching 'Mail' which matches 'MobileMail' and 'MailCacheDeleteExtension'
+					// 	fprintf(stderr, "Found %s (%d). Is this correct (y or n)? ", [processName UTF8String], process[i].kp_proc.p_pid);
+					//
+					// 	if (fgets(line, sizeof(line), stdin) == NULL) {
+					// 		printf("Input error.\n");
+					// 		exit(1);
+					// 	}
+					//
+					// 	if (line[0] != 'y' && line[0] != 'Y') {
+					// 		fprintf(stderr, "");
+					// 		[processName release];
+					// 		continue;
+					// 	}
+					//
+					// 	pid = process[i].kp_proc.p_pid;
+					// 	[processName release];
+					// 	break;
+					// }
 
 					[processName release];
 				}
@@ -136,13 +153,42 @@ void showHelp()
 	fprintf(stderr, "      You must choose an option to Sign or an (AppBundleID or AppName) and options for (enable and/or disable Cycript)\n");
 }
 
+@interface LSResourceProxy : NSObject // _LSQueryResult -> NSObject
+@property (nonatomic,readonly) NSString *primaryIconName;
+@end
+
+@interface LSBundleProxy : LSResourceProxy
+@property (nonatomic,readonly) NSString *localizedShortName;
+@property (nonatomic,readonly) NSString *bundleExecutable;
+@property (nonatomic,readonly) NSString *bundleIdentifier;
+-(id)localizedName;
+@end
+
+@interface LSApplicationProxy : LSBundleProxy
+@property (nonatomic,readonly) NSString *itemName;
+@property (nonatomic,readonly) NSString *applicationType; // User, System
+@property (nonatomic,readonly) NSUInteger installType;
+@end
+
+@interface LSApplicationWorkspace : NSObject
++ (id)defaultWorkspace;
+- (id)allApplications;
+@end
+
+@interface SUKeybagInterface : NSObject
++ (id)sharedInstance;
+@property (nonatomic,readonly) BOOL isPasscodeLocked;
+@end
+
 int main(int argc, char **argv, char **envp)
 {
+	int retVal = 0;
 	BOOL enable = NO;
 	BOOL disable = NO;
 	BOOL force = NO;
 	NSString *bundleIdentifier = nil;
 	NSString *applicationName = nil;
+	NSString *executableName = nil;
 
 	for (int i = 0; i < argc; i++) {
 		if (strcmp(argv[i], "--bundle") == 0 || strcmp(argv[i], "-b") == 0) {
@@ -168,23 +214,43 @@ int main(int argc, char **argv, char **envp)
 
 	if ([bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
 		applicationName = @"SpringBoard";
+		executableName = @"SpringBoard";
 	} else if (applicationName && [applicationName rangeOfString:@"SpringBoard" options:NSCaseInsensitiveSearch].location != NSNotFound) {
 		applicationName = @"SpringBoard";
+		executableName = @"SpringBoard";
 		bundleIdentifier = @"com.apple.springboard";
 	} else {
-		NSDictionary *applications = [[ALApplicationList sharedApplicationList] applications];
-		if (bundleIdentifier) {
-			applicationName = [applications objectForKey:bundleIdentifier];
-			if (!applicationName) {
-				fprintf(stderr, "ERROR - invalid bundleIdentifier %s\n", [bundleIdentifier UTF8String]);
-			}
-		} else {
-			for (NSString *key in applications) {
-				NSString *name = [applications objectForKey:key];
-				// if ([name rangeOfString:applicationName options:NSCaseInsensitiveSearch].location != NSNotFound) {
-				if ([name isEqualToString:applicationName]) {
-					applicationName = name;
-					bundleIdentifier = key;
+		LSApplicationWorkspace *applicationWorkspace = [LSApplicationWorkspace defaultWorkspace];
+		NSArray *proxies = [applicationWorkspace allApplications];
+
+		for (LSApplicationProxy *proxy in proxies) {
+			if (bundleIdentifier && [bundleIdentifier isEqualToString:proxy.bundleIdentifier]) {
+				executableName = proxy.bundleExecutable;
+				applicationName = proxy.localizedName;
+				break;
+			} else if (applicationName) {
+				BOOL found = NO;
+				if ([applicationName isEqualToString:proxy.bundleExecutable]) {
+					found = YES;
+					executableName = proxy.bundleExecutable;
+					bundleIdentifier = proxy.bundleIdentifier;
+				} else if ([applicationName isEqualToString:proxy.localizedName]) {
+					found = YES;
+					executableName = proxy.bundleExecutable;
+					bundleIdentifier = proxy.bundleIdentifier;
+				} else if ([applicationName isEqualToString:proxy.itemName]) {
+					found = YES;
+					executableName = proxy.bundleExecutable;
+					bundleIdentifier = proxy.bundleIdentifier;
+				} else if ([applicationName isEqualToString:proxy.primaryIconName]) {
+					found = YES;
+					executableName = proxy.bundleExecutable;
+					bundleIdentifier = proxy.bundleIdentifier;
+				}
+
+				// fprintf(stderr, "found %d, %s, %s, %s\n", proxy.installType, [proxy.applicationType UTF8String], [proxy.bundleExecutable UTF8String], [proxy.bundleIdentifier UTF8String]);
+
+				if (found) {
 					break;
 				}
 			}
@@ -196,32 +262,15 @@ int main(int argc, char **argv, char **envp)
 		return 1;
 	}
 
-	if (!applicationName) {
-		fprintf(stderr, "ERROR - could not find applicationName for %s\n", [bundleIdentifier UTF8String]);
+	if (!executableName) {
+		fprintf(stderr, "ERROR - could not find executableName for %s\n", [bundleIdentifier UTF8String]);
 		return 1;
 	}
 
-	// if (bundleIdentifier) {
-	// 	NSBundle *bundle = [NSBundle bundleWithIdentifier:bundleIdentifier];
-	// 	if (!bundle) {
-	// 		fprintf(stderr, "ERROR - invalid bundleIdentifier %s\n", [bundleIdentifier UTF8String]);
-	// 		// return 1;
-	// 	}
-	//
-	// 	applicationName = [bundle objectForInfoDictionaryKey:@"CFBundleExecutable"];
-	// 	if (!applicationName) {
-	// 		fprintf(stderr, "ERROR - could not find applicationName for bundleIdentifier %s\n", [bundleIdentifier UTF8String]);
-	// 		// return 1;
-	// 	}
-	// }
-
-	// NSArray *array = [NSBundle allBundles];
-	// NSLog(@"allBundles %@", array);
-
+	BOOL isPasscodeLocked = [[objc_getClass("SUKeybagInterface") sharedInstance] isPasscodeLocked];
 
 	NSArray *filterFileBundles = nil;
-	NSString *actualProcessName = nil;
-	int pid = getPID(applicationName, &actualProcessName);
+	int pid = getPID(executableName);
 	BOOL isCycriptRunning = isLocalPortOpen(8556);
 	if (isCycriptRunning) {
 		NSDictionary *filterFile = [NSDictionary dictionaryWithContentsOfFile:@"/usr/lib/TweakInject/cycriptListener.plist"];
@@ -230,10 +279,11 @@ int main(int argc, char **argv, char **envp)
 		[filterFile release];
 	}
 
-	if (actualProcessName) {
-		applicationName = actualProcessName;
+	fprintf(stderr, "applicationName: %s is %s (%d)\n    executableName: %s\n    bundleIdentifier: %s\n    Cycript is %s: %s\n    Device is%s passcode locked\n", [applicationName UTF8String], pid == -1 ? "not running" : "running", pid, [executableName UTF8String], [bundleIdentifier UTF8String], isCycriptRunning ? "active" : "inactive", filterFileBundles ? [[filterFileBundles objectAtIndex:0] UTF8String] : "", isPasscodeLocked ? "" : " not");
+
+	if (isPasscodeLocked && enable && [bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
+		fprintf(stderr, "WARNING - Since your device is passcode locked and you are trying to enable Cycript for an App, there is a good chance this will fail!\n");
 	}
-	fprintf(stderr, "applicationName (%s) is %s\n    bundleIdentifier (%s)\n    pid (%d)\n    Cycript is %s (%s)\n", [applicationName UTF8String], pid == -1 ? "not running" : "running", [bundleIdentifier UTF8String], pid, isCycriptRunning ? "active" : "inactive", filterFileBundles ? [[filterFileBundles objectAtIndex:0] UTF8String] : "");
 
 	if (isCycriptRunning && !enable && disable) {
 		if (filterFileBundles && ![bundleIdentifier isEqualToString:[filterFileBundles objectAtIndex:0]]) {
@@ -244,13 +294,14 @@ int main(int argc, char **argv, char **envp)
 	if (!force) {
 		fprintf(stderr, "Do you want to continue %s Cycript (y or n)? ", enable ? "enabling" : "disabling");
 
-		char userInput;
-		scanf("%c", &userInput);
-		if (userInput != 'y' && userInput != 'Y') {
+		char line[10];
+		if (fgets(line, sizeof(line), stdin) == NULL) {
+			printf("ERROR - Input.\n");
+			return 1;
+		}
+
+		if (line[0] != 'y' && line[0] != 'Y') {
 			fprintf(stderr, "Ok, cancelled\n");
-			if (actualProcessName) {
-				[actualProcessName release];
-			}
 			return 1;
 		}
 	}
@@ -290,17 +341,10 @@ int main(int argc, char **argv, char **envp)
 			}
 		}
 
-		BKSSystemService *systemService = [[BKSSystemService alloc] init];
-		NSMutableDictionary *options = [NSMutableDictionary dictionary];
-		[options setObject:[NSNumber numberWithBool:NO] forKey:BKSOpenApplicationOptionKeyUnlockDevice];
-		[options setObject:[NSNumber numberWithBool:YES] forKey:@"__ActivateSuspended"];
-		// [options setObject:[NSNumber numberWithBool:YES] forKey:BKSActivateForEventOptionTypeBackgroundContentFetching];
-
 		if (pid != -1) {
 			// [systemService terminateApplication:bundleIdentifier forReason:0 andReport:NO withDescription:@"cyrun"];
-			// [systemService terminateApplication:applicationName forReason:0 andReport:NO withDescription:@"cyrun"];
 			pid_t p;
-			char *argv[] = {"killall", "-9", (char *)[applicationName UTF8String], NULL};
+			char *argv[] = {"killall", "-9", (char *)[executableName UTF8String], NULL};
 			posix_spawn(&p, "/usr/bin/killall", NULL, NULL, argv, NULL);
 			// char pids[16];
 			// sprintf(pids, "-n 9 %d", pid);
@@ -308,14 +352,14 @@ int main(int argc, char **argv, char **envp)
 			// posix_spawn(&p, "/usr/bin/kill", NULL, NULL, argv, NULL);
 
 			// while (pid != -1) {
-			// 	pid = getPID(applicationName, &actualProcessName);
+			// 	pid = getPID(executableName);
 			// }
 
 			if ([bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
 				fprintf(stderr, "Waiting for SpringBoard to close...\n");
 				int lastpid = pid;
 				[NSThread sleepForTimeInterval:2.0f];
-				pid = getPID(applicationName, &actualProcessName);
+				pid = getPID(executableName);
 				if (lastpid == pid) {
 					fprintf(stderr, "ERROR - could not kill SpringBoard\n");
 					return 1;
@@ -323,7 +367,7 @@ int main(int argc, char **argv, char **envp)
 			} else {
 				fprintf(stderr, "Waiting for App to close...\n");
 				[NSThread sleepForTimeInterval:2.0f];
-				pid = getPID(applicationName, &actualProcessName);
+				pid = getPID(executableName);
 				if (pid != -1) {
 					fprintf(stderr, "ERROR - could not kill App\n");
 					return 1;
@@ -332,6 +376,17 @@ int main(int argc, char **argv, char **envp)
 		}
 
 		if (![bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
+			BKSSystemService *systemService = [[BKSSystemService alloc] init];
+			NSMutableDictionary *options = [NSMutableDictionary dictionary];
+
+			if (isPasscodeLocked) {
+				fprintf(stderr, "Locked\n");
+				[options setObject:[NSNumber numberWithBool:NO] forKey:BKSOpenApplicationOptionKeyUnlockDevice];
+				[options setObject:[NSNumber numberWithBool:YES] forKey:@"__ActivateSuspended"];
+			} else {
+				[options setObject:[NSNumber numberWithBool:YES] forKey:BKSOpenApplicationOptionKeyUnlockDevice];
+			}
+
 			__block BKSOpenApplicationErrorCode openApplicationErrorCode = BKSOpenApplicationErrorCodeNone;
 			__block dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
 			[systemService openApplication:bundleIdentifier options:options withResult:^(NSError *error) {
@@ -339,10 +394,6 @@ int main(int argc, char **argv, char **envp)
 						fprintf(stderr, "ERROR - openApplication failed for %s\n    (%ld) %s\n", [bundleIdentifier UTF8String], error.code, [error.localizedDescription UTF8String]);
 						openApplicationErrorCode = (BKSOpenApplicationErrorCode)[error code];
 					}
-
-					// always returns -1
-					// pid_t pid = [systemService pidForApplication:bundleIdentifier];
-					// fprintf(stderr, "pid = %d, %s\n", pid, [bundleIdentifier UTF8String]);
 
 					dispatch_semaphore_signal(semaphore);
 				}
@@ -357,9 +408,9 @@ int main(int argc, char **argv, char **envp)
 			} else if (openApplicationErrorCode != BKSOpenApplicationErrorCodeNone) {
 				// fprintf(stderr, "ERROR - openApplication failed (%ld) for %s\n", openApplicationErrorCode, [bundleIdentifier UTF8String]);
 			} else {
-				pid = getPID(applicationName, &actualProcessName);
+				pid = getPID(executableName);
 				if (pid == -1) {
-					fprintf(stderr, "ERROR - could not launch App, pid not found for %s\n", [applicationName UTF8String]);
+					fprintf(stderr, "ERROR - could not launch App, pid not found for %s\n", [executableName UTF8String]);
 				} else {
 					isCycriptRunning = isLocalPortOpen(8556);
 					fprintf(stderr, "Waiting for Cycript to be active...\n");
@@ -370,6 +421,7 @@ int main(int argc, char **argv, char **envp)
 
 					if (!isCycriptRunning) {
 						fprintf(stderr, "ERROR - could connect to Cycript\n");
+						retVal = 1;
 					} else {
 						fprintf(stderr, "Success, you may now run\n    cycript -r 127.0.0.1:8556\n");
 					}
@@ -404,17 +456,17 @@ int main(int argc, char **argv, char **envp)
 			if (pid != -1) {
 				// [systemService terminateApplication:bundleIdentifier forReason:0 andReport:NO withDescription:@"cyrun"];
 				pid_t p;
-				char *argv[] = {"killall", "-9", (char *)[applicationName UTF8String], NULL};
+				char *argv[] = {"killall", "-9", (char *)[executableName UTF8String], NULL};
 				posix_spawn(&p, "/usr/bin/killall", NULL, NULL, argv, NULL);
 
 				// while (pid != -1) {
-				// 	pid = getPID(applicationName, &actualProcessName);
+				// 	pid = getPID(executableName);
 				// }
 
 				if (![bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
 					fprintf(stderr, "Waiting for App to close...\n");
 					[NSThread sleepForTimeInterval:2.0f];
-					pid = getPID(applicationName, &actualProcessName);
+					pid = getPID(executableName);
 					if (pid != -1) {
 						fprintf(stderr, "ERROR - could not kill App\n");
 						return 1;
@@ -429,21 +481,18 @@ int main(int argc, char **argv, char **envp)
 				}
 
 				if (isCycriptRunning) {
-					fprintf(stderr, "ERROR - Cycript is still running\n    %s was killed\n", [applicationName UTF8String]);
+					fprintf(stderr, "ERROR - Cycript is still running\n    %s was killed\n", [executableName UTF8String]);
+					retVal = 1;
 				} else {
-					fprintf(stderr, "Successfully disabled\n    %s was killed\n", [applicationName UTF8String]);
+					fprintf(stderr, "Successfully disabled\n    %s was killed\n", [executableName UTF8String]);
 				}
 			} else {
 				fprintf(stderr, "Successfully disabled\n");
 			}
 		} else {
-			fprintf(stderr, "Successfully disabled\n    Cycript was not active, so %s was not killed\n", [applicationName UTF8String]);
+			fprintf(stderr, "Successfully disabled\n    Cycript was not active, so %s was not killed\n", [executableName UTF8String]);
 		}
 	}
 
-	if (actualProcessName) {
-		[actualProcessName release];
-	}
-
-	return 0;
+	return retVal;
 }
