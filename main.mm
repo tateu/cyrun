@@ -129,28 +129,6 @@ inline int getPID(NSString *processNameSearch)
 						break;
 					}
 
-					// // This is no longer needed since switching from AppList to LSApplicationWorkspace
-					// else if ([processName rangeOfString:processNameSearch options:NSCaseInsensitiveSearch].location != NSNotFound) {
-					// 	// not an exact match, so must ask the user
-					// 	// this happens when matching 'Mail' which matches 'MobileMail' and 'MailCacheDeleteExtension'
-					// 	fprintf(stderr, "Found %s (%d). Is this correct (y or n)? ", [processName UTF8String], process[i].kp_proc.p_pid);
-					//
-					// 	if (fgets(line, sizeof(line), stdin) == NULL) {
-					// 		printf("Input error.\n");
-					// 		exit(1);
-					// 	}
-					//
-					// 	if (line[0] != 'y' && line[0] != 'Y') {
-					// 		fprintf(stderr, "");
-					// 		[processName release];
-					// 		continue;
-					// 	}
-					//
-					// 	pid = process[i].kp_proc.p_pid;
-					// 	[processName release];
-					// 	break;
-					// }
-
 					[processName release];
 				}
 			}
@@ -284,29 +262,31 @@ int main(int argc, char **argv, char **envp)
 
 	BOOL isPasscodeLocked = [[objc_getClass("SUKeybagInterface") sharedInstance] isPasscodeLocked];
 
-	NSArray *filterFileBundles = nil;
+	NSArray *filterFileObjectList = nil;
 	int pid = getPID(executableName);
 	BOOL isCycriptRunning = isLocalPortOpen(8556);
 	if (isCycriptRunning) {
 		NSDictionary *filterFile = [NSDictionary dictionaryWithContentsOfFile:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.plist"];
 		NSDictionary *filter = [filterFile objectForKey:@"Filter"];
-		if (executable) {
-			filterFileBundles = [filter objectForKey:@"Executables"];
-		} else {
-			filterFileBundles = [filter objectForKey:@"Bundles"];
-		}
+		filterFileObjectList = [filter objectForKey:@"Bundles"] ?: [filter objectForKey:@"Executables"];
 		[filterFile release];
 	}
 
-	fprintf(stderr, "applicationName: %s is %s (%d)\n    executableName: %s\n    bundleIdentifier: %s\n    Cycript is %s: %s\n    Device is%s passcode locked\n", [applicationName UTF8String], pid == -1 ? "not running" : "running", pid, [executableName UTF8String], [bundleIdentifier UTF8String], isCycriptRunning ? "active" : "inactive", filterFileBundles ? [[filterFileBundles objectAtIndex:0] UTF8String] : "", isPasscodeLocked ? "" : " not");
+	fprintf(stderr, "applicationName: %s is %s (%d)\n    executableName: %s\n    bundleIdentifier: %s\n    Cycript is %s: %s\n    Device is%s passcode locked\n", [applicationName UTF8String], pid == -1 ? "not running" : "running", pid, [executableName UTF8String], [bundleIdentifier UTF8String], isCycriptRunning ? "active" : "inactive", filterFileObjectList ? [[filterFileObjectList objectAtIndex:0] UTF8String] : "", isPasscodeLocked ? "" : " not");
 
 	if (isPasscodeLocked && enable && ![executableName isEqualToString:@"SpringBoard"] && !executable) {
 		fprintf(stderr, "WARNING - Since your device is passcode locked and you are trying to enable Cycript for an App, there is a good chance this will fail!\n");
 	}
 
 	if (isCycriptRunning && !enable && disable) {
-		if (filterFileBundles && ![bundleIdentifier isEqualToString:[filterFileBundles objectAtIndex:0]]) {
-			fprintf(stderr, "WARNING - Cycript is active but it looks like the bundleIdentifier you are trying to disable it for does not match!\n");
+		if (executable) {
+			if (filterFileObjectList && ![executableName isEqualToString:[filterFileObjectList objectAtIndex:0]]) {
+				fprintf(stderr, "WARNING - Cycript is active but it looks like the executableName you are trying to disable it for does not match!\n");
+			}
+		} else {
+			if (filterFileObjectList && ![bundleIdentifier isEqualToString:[filterFileObjectList objectAtIndex:0]]) {
+				fprintf(stderr, "WARNING - Cycript is active but it looks like the bundleIdentifier you are trying to disable it for does not match!\n");
+			}
 		}
 	}
 
@@ -332,7 +312,7 @@ int main(int argc, char **argv, char **envp)
 	if (enable) {
 		if (isCycriptRunning) {
 			fprintf(stderr, "ERROR - Cannot enable because Cycript is already active\n");
-			fprintf(stderr, "You can probably disable it with\n    cyrun -b %s -d\n", [[filterFileBundles objectAtIndex:0] UTF8String]);
+			fprintf(stderr, "You can probably disable it with\n    cyrun -b %s -d\n", [[filterFileObjectList objectAtIndex:0] UTF8String]);
 			return 1;
 		}
 
@@ -417,7 +397,6 @@ int main(int argc, char **argv, char **envp)
 			NSMutableDictionary *options = [NSMutableDictionary dictionary];
 
 			if (isPasscodeLocked) {
-				fprintf(stderr, "Locked\n");
 				[options setObject:[NSNumber numberWithBool:NO] forKey:BKSOpenApplicationOptionKeyUnlockDevice];
 				[options setObject:[NSNumber numberWithBool:YES] forKey:@"__ActivateSuspended"];
 			} else {
