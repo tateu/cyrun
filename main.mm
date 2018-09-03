@@ -39,6 +39,33 @@ extern NSString *BKSDebugOptionKeyCancelDebugOnNextLaunch;
 -(BOOL)canOpenApplication:(id)arg1 reason:(int*)arg2 ;
 @end
 
+@interface LSResourceProxy : NSObject // _LSQueryResult -> NSObject
+@property (nonatomic,readonly) NSString *primaryIconName;
+@end
+
+@interface LSBundleProxy : LSResourceProxy
+@property (nonatomic,readonly) NSString *localizedShortName;
+@property (nonatomic,readonly) NSString *bundleExecutable;
+@property (nonatomic,readonly) NSString *bundleIdentifier;
+-(id)localizedName;
+@end
+
+@interface LSApplicationProxy : LSBundleProxy
+@property (nonatomic,readonly) NSString *itemName;
+@property (nonatomic,readonly) NSString *applicationType; // User, System
+@property (nonatomic,readonly) NSUInteger installType;
+@end
+
+@interface LSApplicationWorkspace : NSObject
++ (id)defaultWorkspace;
+- (id)allApplications;
+@end
+
+@interface SUKeybagInterface : NSObject
++ (id)sharedInstance;
+@property (nonatomic,readonly) BOOL isPasscodeLocked;
+@end
+
 inline BOOL isLocalPortOpen(short port)
 {
 	struct sockaddr_in addr;
@@ -138,47 +165,21 @@ inline int getPID(NSString *processNameSearch)
 
 void showHelp()
 {
-	// fprintf(stderr, "Usage: %s \n", argv[0]);
 	fprintf(stderr, "Usage:\n");
 	fprintf(stderr, "      -b <AppBundleID>     - Bundle Identifier of the Application \n");
 	fprintf(stderr, "                             \"com.apple.MobileSMS\"\n");
 	fprintf(stderr, "      -n <AppName>         - Application Name\n");
 	fprintf(stderr, "                             \"Messages\"\n");
+	fprintf(stderr, "      -x <ExecutableName>  - Executable Name\n");
+	fprintf(stderr, "                             \"backboardd\"\n");
 	fprintf(stderr, "      -e                   - Enable Cycript for the given AppBundleID or AppName,\n");
 	fprintf(stderr, "                                 then restart the Application\n");
 	fprintf(stderr, "      -d                   - Disable Cycript for the given AppBundleID or AppName\n");
 	fprintf(stderr, "                                 then restart the Application\n");
 	fprintf(stderr, "                             If both enable and disable are set,\n");
 	fprintf(stderr, "                                 Cycript will be loaded and then unloaded when done\n");
-	fprintf(stderr, "      You must choose an option to Sign or an (AppBundleID or AppName) and options for (enable and/or disable Cycript)\n");
+	fprintf(stderr, "      You must choose an option to Sign or an (AppBundleID or AppName or ExecutableName) and options for (enable and/or disable Cycript)\n");
 }
-
-@interface LSResourceProxy : NSObject // _LSQueryResult -> NSObject
-@property (nonatomic,readonly) NSString *primaryIconName;
-@end
-
-@interface LSBundleProxy : LSResourceProxy
-@property (nonatomic,readonly) NSString *localizedShortName;
-@property (nonatomic,readonly) NSString *bundleExecutable;
-@property (nonatomic,readonly) NSString *bundleIdentifier;
--(id)localizedName;
-@end
-
-@interface LSApplicationProxy : LSBundleProxy
-@property (nonatomic,readonly) NSString *itemName;
-@property (nonatomic,readonly) NSString *applicationType; // User, System
-@property (nonatomic,readonly) NSUInteger installType;
-@end
-
-@interface LSApplicationWorkspace : NSObject
-+ (id)defaultWorkspace;
-- (id)allApplications;
-@end
-
-@interface SUKeybagInterface : NSObject
-+ (id)sharedInstance;
-@property (nonatomic,readonly) BOOL isPasscodeLocked;
-@end
 
 int main(int argc, char **argv, char **envp)
 {
@@ -186,6 +187,7 @@ int main(int argc, char **argv, char **envp)
 	BOOL enable = NO;
 	BOOL disable = NO;
 	BOOL force = NO;
+	BOOL executable = NO;
 	NSString *bundleIdentifier = nil;
 	NSString *applicationName = nil;
 	NSString *executableName = nil;
@@ -195,6 +197,11 @@ int main(int argc, char **argv, char **envp)
 			bundleIdentifier = [NSString stringWithUTF8String:argv[++i]];
 		} else if (strcmp(argv[i], "--name") == 0 || strcmp(argv[i], "-n") == 0) {
 			applicationName = [NSString stringWithUTF8String:argv[++i]];
+		} else if (strcmp(argv[i], "--exec") == 0 || strcmp(argv[i], "-x") == 0) {
+			executableName = [NSString stringWithUTF8String:argv[++i]];
+			executable = YES;
+			bundleIdentifier = @"";
+			applicationName = executableName;
 		} else if (strcmp(argv[i], "--enable") == 0 || strcmp(argv[i], "-e") == 0) {
 			enable = YES;
 		} else if (strcmp(argv[i], "--disable") == 0 || strcmp(argv[i], "-d") == 0) {
@@ -207,7 +214,7 @@ int main(int argc, char **argv, char **envp)
 		}
 	}
 
-	if ((!bundleIdentifier && !applicationName) || (!enable && !disable)) {
+	if ((!bundleIdentifier && !applicationName && !executableName) || (!enable && !disable)) {
 		showHelp();
 		return 1;
 	}
@@ -228,6 +235,13 @@ int main(int argc, char **argv, char **envp)
 				executableName = proxy.bundleExecutable;
 				applicationName = proxy.localizedName;
 				break;
+			} else if (executableName) {
+				if ([executableName isEqualToString:proxy.bundleExecutable]) {
+					executable = NO;
+					bundleIdentifier = proxy.bundleIdentifier;
+					applicationName = proxy.localizedName;
+					break;
+				}
 			} else if (applicationName) {
 				BOOL found = NO;
 				if ([applicationName isEqualToString:proxy.bundleExecutable]) {
@@ -275,13 +289,17 @@ int main(int argc, char **argv, char **envp)
 	if (isCycriptRunning) {
 		NSDictionary *filterFile = [NSDictionary dictionaryWithContentsOfFile:@"/usr/lib/TweakInject/cycriptListener.plist"];
 		NSDictionary *filter = [filterFile objectForKey:@"Filter"];
-		filterFileBundles = [filter objectForKey:@"Bundles"];
+		if (executable) {
+			filterFileBundles = [filter objectForKey:@"Executables"];
+		} else {
+			filterFileBundles = [filter objectForKey:@"Bundles"];
+		}
 		[filterFile release];
 	}
 
 	fprintf(stderr, "applicationName: %s is %s (%d)\n    executableName: %s\n    bundleIdentifier: %s\n    Cycript is %s: %s\n    Device is%s passcode locked\n", [applicationName UTF8String], pid == -1 ? "not running" : "running", pid, [executableName UTF8String], [bundleIdentifier UTF8String], isCycriptRunning ? "active" : "inactive", filterFileBundles ? [[filterFileBundles objectAtIndex:0] UTF8String] : "", isPasscodeLocked ? "" : " not");
 
-	if (isPasscodeLocked && enable && [bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
+	if (isPasscodeLocked && enable && ![executableName isEqualToString:@"SpringBoard"] && !executable) {
 		fprintf(stderr, "WARNING - Since your device is passcode locked and you are trying to enable Cycript for an App, there is a good chance this will fail!\n");
 	}
 
@@ -289,6 +307,10 @@ int main(int argc, char **argv, char **envp)
 		if (filterFileBundles && ![bundleIdentifier isEqualToString:[filterFileBundles objectAtIndex:0]]) {
 			fprintf(stderr, "WARNING - Cycript is active but it looks like the bundleIdentifier you are trying to disable it for does not match!\n");
 		}
+	}
+
+	if (executable && pid == -1 && enable) {
+		fprintf(stderr, "WARNING - You are trying to enable Cycript for an executable that is not running. Cyrun cannot confirm whether or not this is valid!\n");
 	}
 
 	if (!force) {
@@ -313,10 +335,19 @@ int main(int argc, char **argv, char **envp)
 			return 1;
 		}
 
-		NSDictionary *filter = [NSDictionary dictionaryWithObjectsAndKeys:
-			@[bundleIdentifier], @"Bundles",
-			nil
-		];
+		NSDictionary *filter = nil;
+		if (executable) {
+			filter = [NSDictionary dictionaryWithObjectsAndKeys:
+				@[executableName], @"Executables",
+				nil
+			];
+		} else {
+			filter = [NSDictionary dictionaryWithObjectsAndKeys:
+				@[bundleIdentifier], @"Bundles",
+				nil
+			];
+		}
+
 		NSDictionary *filterFile = [NSDictionary dictionaryWithObjectsAndKeys:
 			filter, @"Filter",
 			nil
@@ -351,10 +382,6 @@ int main(int argc, char **argv, char **envp)
 			// char *argv[] = {"kill", pids, NULL};
 			// posix_spawn(&p, "/usr/bin/kill", NULL, NULL, argv, NULL);
 
-			// while (pid != -1) {
-			// 	pid = getPID(executableName);
-			// }
-
 			if ([bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
 				fprintf(stderr, "Waiting for SpringBoard to close...\n");
 				int lastpid = pid;
@@ -362,6 +389,15 @@ int main(int argc, char **argv, char **envp)
 				pid = getPID(executableName);
 				if (lastpid == pid) {
 					fprintf(stderr, "ERROR - could not kill SpringBoard\n");
+					return 1;
+				}
+			} else if (executable) {
+				fprintf(stderr, "Waiting for Process to close...\n");
+				int lastpid = pid;
+				[NSThread sleepForTimeInterval:2.0f];
+				pid = getPID(executableName);
+				if (lastpid == pid) {
+					fprintf(stderr, "ERROR - could not kill Process");
 					return 1;
 				}
 			} else {
@@ -375,7 +411,7 @@ int main(int argc, char **argv, char **envp)
 			}
 		}
 
-		if (![bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
+		if (!executable && ![bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
 			BKSSystemService *systemService = [[BKSSystemService alloc] init];
 			NSMutableDictionary *options = [NSMutableDictionary dictionary];
 
@@ -405,12 +441,14 @@ int main(int argc, char **argv, char **envp)
 
 			if (!success) {
 				fprintf(stderr, "ERROR - openApplication timeout for %s\n", [bundleIdentifier UTF8String]);
+				retVal = 1;
 			} else if (openApplicationErrorCode != BKSOpenApplicationErrorCodeNone) {
-				// fprintf(stderr, "ERROR - openApplication failed (%ld) for %s\n", openApplicationErrorCode, [bundleIdentifier UTF8String]);
+				retVal = 1;
 			} else {
 				pid = getPID(executableName);
 				if (pid == -1) {
 					fprintf(stderr, "ERROR - could not launch App, pid not found for %s\n", [executableName UTF8String]);
+					retVal = 1;
 				} else {
 					isCycriptRunning = isLocalPortOpen(8556);
 					fprintf(stderr, "Waiting for Cycript to be active...\n");
@@ -420,10 +458,10 @@ int main(int argc, char **argv, char **envp)
 					}
 
 					if (!isCycriptRunning) {
-						fprintf(stderr, "ERROR - could connect to Cycript\n");
+						fprintf(stderr, "ERROR - could not connect to Cycript\n");
 						retVal = 1;
 					} else {
-						fprintf(stderr, "Success, you may now run\n    cycript -r 127.0.0.1:8556\n");
+						fprintf(stderr, "Successfully enabled, you may now run\n    cycript -r 127.0.0.1:8556\n");
 					}
 				}
 			}
@@ -432,9 +470,43 @@ int main(int argc, char **argv, char **envp)
 			[systemService release];
 			[options release];
 		} else {
-			fprintf(stderr, "Waiting for SpringBoard to launch...\n");
-			[NSThread sleepForTimeInterval:5.0f];
-			fprintf(stderr, "Successfully enabled, you may now run\n    cycript -r 127.0.0.1:8556\n");
+			if (executable) {
+				if ([executableName isEqualToString:@"backboardd"]) {
+					fprintf(stderr, "Waiting for backboardd to launch...\n");
+					pid = 0;
+					[NSThread sleepForTimeInterval:2.0f];
+				} else {
+					fprintf(stderr, "Waiting for Process to launch...\n");
+					pid = getPID(executableName);
+					for (int i = 0; i < 60 && pid == -1; i++) {
+						[NSThread sleepForTimeInterval:1.0f];
+						pid = getPID(executableName);
+					}
+				}
+			} else {
+				pid = 0;
+				fprintf(stderr, "Waiting for SpringBoard to launch...\n");
+				[NSThread sleepForTimeInterval:2.0f];
+			}
+
+			if (pid == -1) {
+				fprintf(stderr, "ERROR - could not launch Process, pid not found for %s\n", [executableName UTF8String]);
+				retVal = 1;
+			} else {
+				isCycriptRunning = isLocalPortOpen(8556);
+				fprintf(stderr, "Waiting for Cycript to be active...\n");
+				for (int i = 0; i < 5 && !isCycriptRunning; i++) {
+					[NSThread sleepForTimeInterval:1.0f];
+					isCycriptRunning = isLocalPortOpen(8556);
+				}
+
+				if (!isCycriptRunning) {
+					fprintf(stderr, "ERROR - could not connect to Cycript\n");
+					retVal = 1;
+				} else {
+					fprintf(stderr, "Success, you may now run\n    cycript -r 127.0.0.1:8556\n");
+				}
+			}
 		}
 	} else {
 		if ([NSFileManager.defaultManager fileExistsAtPath:@"/usr/lib/TweakInject/cycriptListener.dylib"]) {
@@ -454,16 +526,29 @@ int main(int argc, char **argv, char **envp)
 
 		if (isCycriptRunning) {
 			if (pid != -1) {
-				// [systemService terminateApplication:bundleIdentifier forReason:0 andReport:NO withDescription:@"cyrun"];
 				pid_t p;
 				char *argv[] = {"killall", "-9", (char *)[executableName UTF8String], NULL};
 				posix_spawn(&p, "/usr/bin/killall", NULL, NULL, argv, NULL);
 
-				// while (pid != -1) {
-				// 	pid = getPID(executableName);
-				// }
-
-				if (![bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
+				if ([bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
+					fprintf(stderr, "Waiting for SpringBoard to close...\n");
+					int lastpid = pid;
+					[NSThread sleepForTimeInterval:2.0f];
+					pid = getPID(executableName);
+					if (lastpid == pid) {
+						fprintf(stderr, "ERROR - could not kill SpringBoard\n");
+						return 1;
+					}
+				} else if (executable) {
+					fprintf(stderr, "Waiting for Process to close...\n");
+					int lastpid = pid;
+					[NSThread sleepForTimeInterval:2.0f];
+					pid = getPID(executableName);
+					if (lastpid == pid) {
+						fprintf(stderr, "ERROR - could not kill Process");
+						return 1;
+					}
+				} else {
 					fprintf(stderr, "Waiting for App to close...\n");
 					[NSThread sleepForTimeInterval:2.0f];
 					pid = getPID(executableName);

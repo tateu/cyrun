@@ -40,7 +40,11 @@ Or you can load and auto unloaded Cycript from the iOS Mail App. Mail will be te
 
 	cyrun -n Mail -e -d
 
-The '-n' command takes an AppName as known by AppList. I believe this is usually the same as the icon name.
+Or you can load and auto unloaded Cycript from backboardd. backboardd will be terminated and auto restart. When you ?exit Cycript, it will be killed and unloaded.
+
+	cyrun -x backboardd -e -d
+
+The '-n' command takes an AppName, ExecutableName, IconName or LocalizedName.
 
 You can use a bundleIdentifier instead of an App name with `'-b com.apple.springboard'`
 
