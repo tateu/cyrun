@@ -166,19 +166,20 @@ inline int getPID(NSString *processNameSearch)
 void showHelp()
 {
 	fprintf(stderr, "Usage:\n");
-	fprintf(stderr, "      -b <AppBundleID>     - Bundle Identifier of the Application \n");
-	fprintf(stderr, "                             \"com.apple.MobileSMS\"\n");
-	fprintf(stderr, "      -n <AppName>         - Application Name\n");
-	fprintf(stderr, "                             \"Messages\"\n");
-	fprintf(stderr, "      -x <ExecutableName>  - Executable Name\n");
-	fprintf(stderr, "                             \"backboardd\"\n");
-	fprintf(stderr, "      -e                   - Enable Cycript for the given AppBundleID or AppName,\n");
-	fprintf(stderr, "                                 then restart the Application\n");
-	fprintf(stderr, "      -d                   - Disable Cycript for the given AppBundleID or AppName\n");
-	fprintf(stderr, "                                 then restart the Application\n");
-	fprintf(stderr, "                             If both enable and disable are set,\n");
-	fprintf(stderr, "                                 Cycript will be loaded and then unloaded when done\n");
-	fprintf(stderr, "      You must choose an option to Sign or an (AppBundleID or AppName or ExecutableName) and options for (enable and/or disable Cycript)\n");
+	fprintf(stderr, "    -b <AppBundleID>    - Bundle Identifier of the Application \n");
+	fprintf(stderr, "                            \"com.apple.MobileSMS\"\n");
+	fprintf(stderr, "    -n <AppName>        - Application Name, ExecutableName, IconName or LocalizedName\n");
+	fprintf(stderr, "                            \"Messages\"\n");
+	fprintf(stderr, "    -x <ExecutableName> - Executable Name\n");
+	fprintf(stderr, "                            \"backboardd\"\n");
+	fprintf(stderr, "    -e                  - Enable Cycript for the given Process\n");
+	fprintf(stderr, "                            Then, if it is an App, restart it\n");
+	fprintf(stderr, "    -d                  - Disable Cycript for the given Process\n");
+	fprintf(stderr, "                            Then, if it is an App, restart it\n");
+	fprintf(stderr, "                        If both enable and disable are set,\n");
+	fprintf(stderr, "                            Cycript will be loaded and then unloaded when done\n");
+	fprintf(stderr, "    -h                  - This help file\n");
+	fprintf(stderr, "    You must choose an (AppBundleID or AppName or ExecutableName) and options for (enable and/or disable Cycript)\n");
 }
 
 int main(int argc, char **argv, char **envp)
@@ -287,7 +288,7 @@ int main(int argc, char **argv, char **envp)
 	int pid = getPID(executableName);
 	BOOL isCycriptRunning = isLocalPortOpen(8556);
 	if (isCycriptRunning) {
-		NSDictionary *filterFile = [NSDictionary dictionaryWithContentsOfFile:@"/usr/lib/TweakInject/cycriptListener.plist"];
+		NSDictionary *filterFile = [NSDictionary dictionaryWithContentsOfFile:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.plist"];
 		NSDictionary *filter = [filterFile objectForKey:@"Filter"];
 		if (executable) {
 			filterFileBundles = [filter objectForKey:@"Executables"];
@@ -353,18 +354,18 @@ int main(int argc, char **argv, char **envp)
 			nil
 		];
 
-		[filterFile writeToFile:@"/usr/lib/TweakInject/cycriptListener.plist" atomically:YES];
+		[filterFile writeToFile:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.plist" atomically:YES];
 		[filter release];
 		[filterFile release];
 
-		if ([NSFileManager.defaultManager fileExistsAtPath:@"/usr/lib/TweakInject/cycriptListener.disabled"]) {
+		if ([NSFileManager.defaultManager fileExistsAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.disabled"]) {
 			NSError *error = NULL;
 			BOOL result = YES;
-			if ([NSFileManager.defaultManager fileExistsAtPath:@"/usr/lib/TweakInject/cycriptListener.dylib"]) {
+			if ([NSFileManager.defaultManager fileExistsAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.dylib"]) {
 				// this might happen right after reinstalling the tweak
-				result = [NSFileManager.defaultManager removeItemAtPath:@"/usr/lib/TweakInject/cycriptListener.disabled" error:&error];
+				result = [NSFileManager.defaultManager removeItemAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.disabled" error:&error];
 			} else {
-				result = [NSFileManager.defaultManager moveItemAtPath:@"/usr/lib/TweakInject/cycriptListener.disabled" toPath:@"/usr/lib/TweakInject/cycriptListener.dylib" error:&error];
+				result = [NSFileManager.defaultManager moveItemAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.disabled" toPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.dylib" error:&error];
 				if (!result) {
 					fprintf(stderr, "ERROR - enabling dylib file\n    (%ld) %s\n", error.code, [error.localizedDescription UTF8String]);
 					return 1;
@@ -509,15 +510,15 @@ int main(int argc, char **argv, char **envp)
 			}
 		}
 	} else {
-		if ([NSFileManager.defaultManager fileExistsAtPath:@"/usr/lib/TweakInject/cycriptListener.dylib"]) {
+		if ([NSFileManager.defaultManager fileExistsAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.dylib"]) {
 			NSError *error = NULL;
 			BOOL result = YES;
-			if ([NSFileManager.defaultManager fileExistsAtPath:@"/usr/lib/TweakInject/cycriptListener.disabled"]) {
+			if ([NSFileManager.defaultManager fileExistsAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.disabled"]) {
 				// this might happen right after reinstalling the tweak
-				result = [NSFileManager.defaultManager removeItemAtPath:@"/usr/lib/TweakInject/cycriptListener.disabled" error:&error];
+				result = [NSFileManager.defaultManager removeItemAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.disabled" error:&error];
 			}
 
-			result = [NSFileManager.defaultManager moveItemAtPath:@"/usr/lib/TweakInject/cycriptListener.dylib" toPath:@"/usr/lib/TweakInject/cycriptListener.disabled" error:&error];
+			result = [NSFileManager.defaultManager moveItemAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.dylib" toPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.disabled" error:&error];
 			if (!result) {
 				fprintf(stderr, "ERROR - disabling dylib file\n    (%ld) %s\n", error.code, [error.localizedDescription UTF8String]);
 				return 1;

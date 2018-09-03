@@ -40,6 +40,11 @@ do
 		sign=YES
 		shift
 		;;
+		-c|--cyscript)
+		cyscript="$2"
+		shift
+		shift
+		;;
 		*)    # unknown option
 		POSITIONAL+=("$1") # save it in an array for later
 		shift # past argument
@@ -49,13 +54,34 @@ done
 
 set -- "${POSITIONAL[@]}" # restore positional parameters
 
+if [ "$help" == "YES" ]; then
+	echo "Usage:"
+	echo "    -b <AppBundleID>        - Bundle Identifier of the Application"
+	echo "                                \"com.apple.MobileSMS\""
+	echo "    -n <AppName>            - Application Name, ExecutableName, IconName or LocalizedName"
+	echo "                                \"Messages\""
+	echo "    -x <ExecutableName>     - Executable Name"
+	echo "                                \"backboardd\""
+	echo "    -e                      - Enable Cycript for the given Process"
+	echo "                                Then, if it is an App, restart it"
+	echo "    -d                      - Disable Cycript for the given Process"
+	echo "                                Then, if it is an App, restart it"
+	echo "                            If both enable and disable are set,"
+	echo "                                Cycript will be loaded and then unloaded when done"
+	echo "    -c </path/to/script.cy> - Load an external Cycript script"
+	echo "    -s                      - Sign the Cycript binaries with entitlements for Electra iOS 11"
+	echo "    -h                      - This help file"
+	echo "    You must choose an option to Sign or an (AppBundleID or AppName or ExecutableName) and options for (enable and/or disable Cycript)"
+	exit 0
+fi
+
 if [ "$sign" == "YES" ]; then
 	`cycript -h`
 	retVal=$?
 
 	if [ "$retVal" == "127" ] ; then
 		echo "ERROR - The Cycript binary does not appear to be installed"
-		exit 0
+		exit 1
 	fi
 
 	if [ "$retVal" != "137" ] && [ "$force" != "YES" ]; then
@@ -144,6 +170,9 @@ fi
 retVal=$?
 
 if [ "$retVal" == "0" ] && [ "$enable" == "YES" ]; then
+	if [ "$cyscript" != "" ]; then
+		cycript -r 127.0.0.1:8556 "$cyscript"
+	fi
 	cycript -r 127.0.0.1:8556
 
 	if [ "$disable" == "YES" ]; then
