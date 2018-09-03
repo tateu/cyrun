@@ -66,7 +66,7 @@ extern NSString *BKSDebugOptionKeyCancelDebugOnNextLaunch;
 @property (nonatomic,readonly) BOOL isPasscodeLocked;
 @end
 
-inline BOOL isLocalPortOpen(short port)
+static inline BOOL isLocalPortOpen(short port)
 {
 	struct sockaddr_in addr;
 	int sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -87,7 +87,7 @@ inline BOOL isLocalPortOpen(short port)
 }
 
 // https://stackoverflow.com/questions/6610705/how-to-get-process-id-in-iphone-or-ipad
-inline int getPID(NSString *processNameSearch)
+static inline int getPID(NSString *processNameSearch)
 {
 	int pid = -1;
 	int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL ,0};
@@ -141,7 +141,26 @@ inline int getPID(NSString *processNameSearch)
 	return pid;
 }
 
-void showHelp()
+static inline BOOL killProcessByName(NSString *executableName, pid_t *pid)
+{
+	pid_t p;
+	int status;
+	int lastpid = *pid;
+	char *argv[] = {"killall", "-9", (char *)[executableName UTF8String], NULL};
+	posix_spawn(&p, "/usr/bin/killall", NULL, NULL, argv, NULL);
+
+	fprintf(stderr, "Waiting for Process to close...\n");
+	[NSThread sleepForTimeInterval:2.0f];
+	*pid = getPID(executableName);
+	if (lastpid == *pid) {
+		fprintf(stderr, "ERROR - could not kill Process (%d == %d)\n", lastpid, *pid);
+		return NO;
+	}
+
+	return YES;
+}
+
+static void showHelp()
 {
 	fprintf(stderr, "Usage:\n");
 	fprintf(stderr, "    -b <AppBundleID>    - Bundle Identifier of the Application \n");
@@ -355,40 +374,9 @@ int main(int argc, char **argv, char **envp)
 
 		if (pid != -1) {
 			// [systemService terminateApplication:bundleIdentifier forReason:0 andReport:NO withDescription:@"cyrun"];
-			pid_t p;
-			char *argv[] = {"killall", "-9", (char *)[executableName UTF8String], NULL};
-			posix_spawn(&p, "/usr/bin/killall", NULL, NULL, argv, NULL);
-			// char pids[16];
-			// sprintf(pids, "-n 9 %d", pid);
-			// char *argv[] = {"kill", pids, NULL};
-			// posix_spawn(&p, "/usr/bin/kill", NULL, NULL, argv, NULL);
-
-			if ([bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
-				fprintf(stderr, "Waiting for SpringBoard to close...\n");
-				int lastpid = pid;
-				[NSThread sleepForTimeInterval:2.0f];
-				pid = getPID(executableName);
-				if (lastpid == pid) {
-					fprintf(stderr, "ERROR - could not kill SpringBoard\n");
-					return 1;
-				}
-			} else if (executable) {
-				fprintf(stderr, "Waiting for Process to close...\n");
-				int lastpid = pid;
-				[NSThread sleepForTimeInterval:2.0f];
-				pid = getPID(executableName);
-				if (lastpid == pid) {
-					fprintf(stderr, "ERROR - could not kill Process");
-					return 1;
-				}
-			} else {
-				fprintf(stderr, "Waiting for App to close...\n");
-				[NSThread sleepForTimeInterval:2.0f];
-				pid = getPID(executableName);
-				if (pid != -1) {
-					fprintf(stderr, "ERROR - could not kill App\n");
-					return 1;
-				}
+			BOOL success = killProcessByName(executableName, &pid);
+			if (!success) {
+				return 1;
 			}
 		}
 
@@ -431,7 +419,7 @@ int main(int argc, char **argv, char **envp)
 					retVal = 1;
 				} else {
 					isCycriptRunning = isLocalPortOpen(8556);
-					fprintf(stderr, "Waiting for Cycript to be active...\n");
+					fprintf(stderr, "Waiting for Cycript to become active...\n");
 					for (int i = 0; i < 5 && !isCycriptRunning; i++) {
 						[NSThread sleepForTimeInterval:1.0f];
 						isCycriptRunning = isLocalPortOpen(8556);
@@ -474,7 +462,7 @@ int main(int argc, char **argv, char **envp)
 				retVal = 1;
 			} else {
 				isCycriptRunning = isLocalPortOpen(8556);
-				fprintf(stderr, "Waiting for Cycript to be active...\n");
+				fprintf(stderr, "Waiting for Cycript to become active...\n");
 				for (int i = 0; i < 5 && !isCycriptRunning; i++) {
 					[NSThread sleepForTimeInterval:1.0f];
 					isCycriptRunning = isLocalPortOpen(8556);
@@ -506,36 +494,9 @@ int main(int argc, char **argv, char **envp)
 
 		if (isCycriptRunning) {
 			if (pid != -1) {
-				pid_t p;
-				char *argv[] = {"killall", "-9", (char *)[executableName UTF8String], NULL};
-				posix_spawn(&p, "/usr/bin/killall", NULL, NULL, argv, NULL);
-
-				if ([bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
-					fprintf(stderr, "Waiting for SpringBoard to close...\n");
-					int lastpid = pid;
-					[NSThread sleepForTimeInterval:2.0f];
-					pid = getPID(executableName);
-					if (lastpid == pid) {
-						fprintf(stderr, "ERROR - could not kill SpringBoard\n");
-						return 1;
-					}
-				} else if (executable) {
-					fprintf(stderr, "Waiting for Process to close...\n");
-					int lastpid = pid;
-					[NSThread sleepForTimeInterval:2.0f];
-					pid = getPID(executableName);
-					if (lastpid == pid) {
-						fprintf(stderr, "ERROR - could not kill Process");
-						return 1;
-					}
-				} else {
-					fprintf(stderr, "Waiting for App to close...\n");
-					[NSThread sleepForTimeInterval:2.0f];
-					pid = getPID(executableName);
-					if (pid != -1) {
-						fprintf(stderr, "ERROR - could not kill App\n");
-						return 1;
-					}
+				BOOL success = killProcessByName(executableName, &pid);
+				if (!success) {
+					return 1;
 				}
 
 				isCycriptRunning = isLocalPortOpen(8556);
