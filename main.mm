@@ -4,6 +4,11 @@
 #import <arpa/inet.h>
 #import <spawn.h>
 
+enum {
+	filterTypeBundle = 0,
+	filterTypeExecutable
+};
+
 typedef long BKSOpenApplicationErrorCode;
 enum {
 	BKSOpenApplicationErrorCodeNone = 0,
@@ -144,7 +149,6 @@ static inline int getPID(NSString *processNameSearch)
 static inline BOOL killProcessByName(NSString *executableName, pid_t *pid)
 {
 	pid_t p;
-	int status;
 	int lastpid = *pid;
 	char *argv[] = {"killall", "-9", (char *)[executableName UTF8String], NULL};
 	posix_spawn(&p, "/usr/bin/killall", NULL, NULL, argv, NULL);
@@ -163,29 +167,37 @@ static inline BOOL killProcessByName(NSString *executableName, pid_t *pid)
 static void showHelp()
 {
 	fprintf(stderr, "Usage:\n");
-	fprintf(stderr, "    -b <AppBundleID>    - Bundle Identifier of the Application \n");
-	fprintf(stderr, "                            \"com.apple.MobileSMS\"\n");
-	fprintf(stderr, "    -n <AppName>        - Application Name, ExecutableName, IconName or LocalizedName\n");
-	fprintf(stderr, "                            \"Messages\"\n");
-	fprintf(stderr, "    -x <ExecutableName> - Executable Name\n");
-	fprintf(stderr, "                            \"backboardd\"\n");
-	fprintf(stderr, "    -e                  - Enable Cycript for the given Process\n");
-	fprintf(stderr, "                            Then, if it is an App, restart it\n");
-	fprintf(stderr, "    -d                  - Disable Cycript for the given Process\n");
-	fprintf(stderr, "                            Then, if it is an App, restart it\n");
-	fprintf(stderr, "                        If both enable and disable are set,\n");
-	fprintf(stderr, "                            Cycript will be loaded and then unloaded when done\n");
-	fprintf(stderr, "    -h                  - This help file\n");
+	fprintf(stderr, "    -b <AppBundleID>        - Bundle Identifier of the Application\n");
+	fprintf(stderr, "                                'com.apple.MobileSMS'\n");
+	fprintf(stderr, "    -n <AppName>            - Application Name, ExecutableName, IconName or LocalizedName\n");
+	fprintf(stderr, "                                'Messages'\n");
+	fprintf(stderr, "    -x <ExecutableName>     - Executable Name\n");
+	fprintf(stderr, "                                'backboardd'\n");
+	fprintf(stderr, "    -e                      - Enable Cycript for the given Process\n");
+	fprintf(stderr, "                                If running in Tweak Mode, kill the Process\n");
+	fprintf(stderr, "                                    Then, if it is an App, restart it\n");
+	fprintf(stderr, "                                If running in Inject Mode (Experimental),\n");
+	fprintf(stderr, "                                    directly inject cycriptListener.dylib\n");
+	fprintf(stderr, "    -d                      - Disable Cycript for the given Process by killing the Process\n");
+	fprintf(stderr, "                                and disabling cycriptListener.dylib\n");
+	fprintf(stderr, "    -f                      - Run without asking for confirmation\n");
+	fprintf(stderr, "    -p <TweakFolderPath>    - Full path to the MobileSubstrate tweak folder\n");
+	fprintf(stderr, "                                default value is '/Library/MobileSubstrate/DynamicLibraries'\n");
+	fprintf(stderr, "    -i                      - Use inject_criticald to load Cycript, instead of the default TweakMode\n");
+	fprintf(stderr, "                                This will inject Cycript without having to kill the Process first.\n");
+	fprintf(stderr, "                                However, this is experimental and seems to fail often and crash the Process\n");
+	fprintf(stderr, "    -h                      - This help file\n");
 	fprintf(stderr, "    You must choose an (AppBundleID or AppName or ExecutableName) and options for (enable and/or disable Cycript)\n");
 }
 
 int main(int argc, char **argv, char **envp)
 {
-	int retVal = 0;
 	BOOL enable = NO;
 	BOOL disable = NO;
 	BOOL force = NO;
 	BOOL executable = NO;
+	BOOL tweakMode = YES;
+	NSString *tweakFolderPath = @"/Library/MobileSubstrate/DynamicLibraries";
 	NSString *bundleIdentifier = nil;
 	NSString *applicationName = nil;
 	NSString *executableName = nil;
@@ -206,6 +218,10 @@ int main(int argc, char **argv, char **envp)
 			disable = YES;
 		} else if (strcmp(argv[i], "--force") == 0 || strcmp(argv[i], "-f") == 0) {
 			force = YES;
+		} else if (strcmp(argv[i], "--path") == 0 || strcmp(argv[i], "-p") == 0) {
+			tweakFolderPath = [NSString stringWithUTF8String:argv[++i]];
+		} else if (strcmp(argv[i], "--inject") == 0 || strcmp(argv[i], "-i") == 0) {
+			tweakMode = NO;
 		} else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
 			showHelp();
 			return 1;
@@ -220,7 +236,7 @@ int main(int argc, char **argv, char **envp)
 	if ([bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
 		applicationName = @"SpringBoard";
 		executableName = @"SpringBoard";
-	} else if (applicationName && [applicationName rangeOfString:@"SpringBoard" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+	} else if (applicationName && [[applicationName lowercaseString] isEqualToString:@"springboard"]) {
 		applicationName = @"SpringBoard";
 		executableName = @"SpringBoard";
 		bundleIdentifier = @"com.apple.springboard";
@@ -260,8 +276,6 @@ int main(int argc, char **argv, char **envp)
 					bundleIdentifier = proxy.bundleIdentifier;
 				}
 
-				// fprintf(stderr, "found %d, %s, %s, %s\n", proxy.installType, [proxy.applicationType UTF8String], [proxy.bundleExecutable UTF8String], [proxy.bundleIdentifier UTF8String]);
-
 				if (found) {
 					break;
 				}
@@ -271,6 +285,9 @@ int main(int argc, char **argv, char **envp)
 
 	if (!bundleIdentifier) {
 		fprintf(stderr, "ERROR - could not find bundleIdentifier for %s\n", [applicationName UTF8String]);
+		if (!tweakMode) {
+			fprintf(stderr, "    Maybe you meant to run with '-x' instead of '-n' or '-b'?\n");
+		}
 		return 1;
 	}
 
@@ -279,38 +296,72 @@ int main(int argc, char **argv, char **envp)
 		return 1;
 	}
 
+	NSString *plistPath = [NSString stringWithFormat:@"%@/cycriptListener.plist", tweakFolderPath];
+	if (![NSFileManager.defaultManager fileExistsAtPath:plistPath]) {
+		fprintf(stderr, "ERROR - could not find plist at %s\n    Please specify the correct path using the '-p /path/to/tweakFolder' option\n", [plistPath UTF8String]);
+		return 1;
+	}
+
+	if (!tweakMode && ![NSFileManager.defaultManager fileExistsAtPath:@"/electra/inject_criticald"]) {
+		fprintf(stderr, "ERROR - could not find /electra/inject_criticald\n");
+		return 1;
+	}
+
+	NSString *enabledPath = [NSString stringWithFormat:@"%@/cycriptListener.dylib", tweakFolderPath];
+	NSString *disabledPath = [NSString stringWithFormat:@"%@/cycriptListener.disabled", tweakFolderPath];
+
 	BOOL isPasscodeLocked = [[objc_getClass("SUKeybagInterface") sharedInstance] isPasscodeLocked];
 
+	int filterType = -1;
 	NSArray *filterFileObjectList = nil;
 	int pid = getPID(executableName);
 	BOOL isCycriptRunning = isLocalPortOpen(8556);
 	if (isCycriptRunning) {
-		NSDictionary *filterFile = [NSDictionary dictionaryWithContentsOfFile:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.plist"];
+		NSDictionary *filterFile = [NSDictionary dictionaryWithContentsOfFile:plistPath];
 		NSDictionary *filter = [filterFile objectForKey:@"Filter"];
-		filterFileObjectList = [filter objectForKey:@"Bundles"] ?: [filter objectForKey:@"Executables"];
+		if ([filter objectForKey:@"Bundles"]) {
+			filterFileObjectList = [filter objectForKey:@"Bundles"];
+			filterType = filterTypeBundle;
+		} else {
+			filterFileObjectList = [filter objectForKey:@"Executables"];
+			filterType = filterTypeExecutable;
+		}
 		[filterFile release];
 	}
 
-	fprintf(stderr, "applicationName: %s is %s (%d)\n    executableName: %s\n    bundleIdentifier: %s\n    Cycript is %s: %s\n    Device is%s passcode locked\n", [applicationName UTF8String], pid == -1 ? "not running" : "running", pid, [executableName UTF8String], [bundleIdentifier UTF8String], isCycriptRunning ? "active" : "inactive", filterFileObjectList ? [[filterFileObjectList objectAtIndex:0] UTF8String] : "", isPasscodeLocked ? "" : " not");
+	fprintf(stderr, "applicationName: %s is %s (%d)\n    executableName: %s\n    bundleIdentifier: %s\n    Cycript is %s: %s\n    Device is%s passcode locked\n    %s\n", [applicationName UTF8String], pid == -1 ? "not running" : "running", pid, [executableName UTF8String], [bundleIdentifier UTF8String], isCycriptRunning ? "active" : "inactive", filterFileObjectList ? [[filterFileObjectList objectAtIndex:0] UTF8String] : "", isPasscodeLocked ? "" : " not", tweakMode ? "Tweak Mode" : "Inject Mode (Experimental)");
 
-	if (isPasscodeLocked && enable && ![executableName isEqualToString:@"SpringBoard"] && !executable) {
+	if (isPasscodeLocked && enable && ![executableName isEqualToString:@"SpringBoard"] && (!executable && tweakMode)) {
 		fprintf(stderr, "WARNING - Since your device is passcode locked and you are trying to enable Cycript for an App, there is a good chance this will fail!\n");
 	}
 
 	if (isCycriptRunning && !enable && disable) {
-		if (executable) {
+		if (executable || !tweakMode) {
 			if (filterFileObjectList && ![executableName isEqualToString:[filterFileObjectList objectAtIndex:0]]) {
 				fprintf(stderr, "WARNING - Cycript is active but it looks like the executableName you are trying to disable it for does not match!\n");
 			}
 		} else {
-			if (filterFileObjectList && ![bundleIdentifier isEqualToString:[filterFileObjectList objectAtIndex:0]]) {
-				fprintf(stderr, "WARNING - Cycript is active but it looks like the bundleIdentifier you are trying to disable it for does not match!\n");
+			if (filterFileObjectList) {
+				if (filterType == filterTypeBundle && ![bundleIdentifier isEqualToString:[filterFileObjectList objectAtIndex:0]]) {
+					fprintf(stderr, "WARNING - Cycript is active but it looks like the bundleIdentifier you are trying to disable it for does not match!\n");
+				} else if (filterType == filterTypeExecutable && ![executableName isEqualToString:[filterFileObjectList objectAtIndex:0]]) {
+					fprintf(stderr, "WARNING - Cycript is active but it looks like the executableName you are trying to disable it for does not match!\n");
+				}
 			}
 		}
 	}
 
-	if (executable && pid == -1 && enable) {
+	if (!tweakMode && pid == -1 && enable) {
+		fprintf(stderr, "ERROR - You are trying to enable Cycript using inject mode for an executable that is not running.\n");
+		return 1;
+	} else if (executable && pid == -1 && enable) {
 		fprintf(stderr, "WARNING - You are trying to enable Cycript for an executable that is not running. Cyrun cannot confirm whether or not this is valid!\n");
+	}
+
+	if (enable && isCycriptRunning) {
+		fprintf(stderr, "ERROR - Cannot enable because Cycript is already active\n");
+		fprintf(stderr, "    You can probably disable it with\n    cyrun -%s %s -d\n", filterType == filterTypeBundle ? "b" : "x", [[filterFileObjectList objectAtIndex:0] UTF8String]);
+		return 1;
 	}
 
 	if (!force) {
@@ -329,14 +380,8 @@ int main(int argc, char **argv, char **envp)
 	}
 
 	if (enable) {
-		if (isCycriptRunning) {
-			fprintf(stderr, "ERROR - Cannot enable because Cycript is already active\n");
-			fprintf(stderr, "You can probably disable it with\n    cyrun -b %s -d\n", [[filterFileObjectList objectAtIndex:0] UTF8String]);
-			return 1;
-		}
-
 		NSDictionary *filter = nil;
-		if (executable) {
+		if (executable || !tweakMode) {
 			filter = [NSDictionary dictionaryWithObjectsAndKeys:
 				@[executableName], @"Executables",
 				nil
@@ -353,70 +398,114 @@ int main(int argc, char **argv, char **envp)
 			nil
 		];
 
-		[filterFile writeToFile:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.plist" atomically:YES];
+		[filterFile writeToFile:plistPath atomically:YES];
 		[filter release];
 		[filterFile release];
 
-		if ([NSFileManager.defaultManager fileExistsAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.disabled"]) {
-			NSError *error = NULL;
-			BOOL result = YES;
-			if ([NSFileManager.defaultManager fileExistsAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.dylib"]) {
-				// this might happen right after reinstalling the tweak
-				result = [NSFileManager.defaultManager removeItemAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.disabled" error:&error];
-			} else {
-				result = [NSFileManager.defaultManager moveItemAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.disabled" toPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.dylib" error:&error];
-				if (!result) {
-					fprintf(stderr, "ERROR - enabling dylib file\n    (%ld) %s\n", error.code, [error.localizedDescription UTF8String]);
+		if (tweakMode) {
+			if ([NSFileManager.defaultManager fileExistsAtPath:disabledPath]) {
+				NSError *error = NULL;
+				BOOL result = YES;
+				if ([NSFileManager.defaultManager fileExistsAtPath:enabledPath]) {
+					// this might happen right after reinstalling the tweak
+					result = [NSFileManager.defaultManager removeItemAtPath:disabledPath error:&error];
+				} else {
+					result = [NSFileManager.defaultManager moveItemAtPath:disabledPath toPath:enabledPath error:&error];
+					if (!result) {
+						fprintf(stderr, "ERROR - enabling dylib file\n    (%ld) %s\n", error.code, [error.localizedDescription UTF8String]);
+						return 1;
+					}
+				}
+			}
+
+			if (pid != -1) {
+				// [systemService terminateApplication:bundleIdentifier forReason:0 andReport:NO withDescription:@"cyrun"];
+				BOOL success = killProcessByName(executableName, &pid);
+				if (!success) {
 					return 1;
 				}
 			}
-		}
 
-		if (pid != -1) {
-			// [systemService terminateApplication:bundleIdentifier forReason:0 andReport:NO withDescription:@"cyrun"];
-			BOOL success = killProcessByName(executableName, &pid);
-			if (!success) {
-				return 1;
-			}
-		}
+			if (!executable && ![bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
+				BKSSystemService *systemService = [[BKSSystemService alloc] init];
+				NSMutableDictionary *options = [NSMutableDictionary dictionary];
 
-		if (!executable && ![bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
-			BKSSystemService *systemService = [[BKSSystemService alloc] init];
-			NSMutableDictionary *options = [NSMutableDictionary dictionary];
-
-			if (isPasscodeLocked) {
-				[options setObject:[NSNumber numberWithBool:NO] forKey:BKSOpenApplicationOptionKeyUnlockDevice];
-				[options setObject:[NSNumber numberWithBool:YES] forKey:@"__ActivateSuspended"];
-			} else {
-				[options setObject:[NSNumber numberWithBool:YES] forKey:BKSOpenApplicationOptionKeyUnlockDevice];
-			}
-
-			__block BKSOpenApplicationErrorCode openApplicationErrorCode = BKSOpenApplicationErrorCodeNone;
-			__block dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-			[systemService openApplication:bundleIdentifier options:options withResult:^(NSError *error) {
-					if (error) {
-						fprintf(stderr, "ERROR - openApplication failed for %s\n    (%ld) %s\n", [bundleIdentifier UTF8String], error.code, [error.localizedDescription UTF8String]);
-						openApplicationErrorCode = (BKSOpenApplicationErrorCode)[error code];
-					}
-
-					dispatch_semaphore_signal(semaphore);
+				if (isPasscodeLocked) {
+					[options setObject:[NSNumber numberWithBool:NO] forKey:BKSOpenApplicationOptionKeyUnlockDevice];
+					[options setObject:[NSNumber numberWithBool:YES] forKey:@"__ActivateSuspended"];
+				} else {
+					[options setObject:[NSNumber numberWithBool:YES] forKey:BKSOpenApplicationOptionKeyUnlockDevice];
 				}
-			];
 
-			const uint32_t timeoutDuration = 10;
-			dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, timeoutDuration * NSEC_PER_SEC);
-			long success = dispatch_semaphore_wait(semaphore, timeout) == 0;
+				__block BKSOpenApplicationErrorCode openApplicationErrorCode = BKSOpenApplicationErrorCodeNone;
+				__block dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+				[systemService openApplication:bundleIdentifier options:options withResult:^(NSError *error) {
+						if (error) {
+							fprintf(stderr, "ERROR - openApplication failed for %s\n    (%ld) %s\n", [bundleIdentifier UTF8String], error.code, [error.localizedDescription UTF8String]);
+							openApplicationErrorCode = (BKSOpenApplicationErrorCode)[error code];
+						}
 
-			if (!success) {
-				fprintf(stderr, "ERROR - openApplication timeout for %s\n", [bundleIdentifier UTF8String]);
-				retVal = 1;
-			} else if (openApplicationErrorCode != BKSOpenApplicationErrorCodeNone) {
-				retVal = 1;
+						dispatch_semaphore_signal(semaphore);
+					}
+				];
+
+				const uint32_t timeoutDuration = 10;
+				dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, timeoutDuration * NSEC_PER_SEC);
+				long success = dispatch_semaphore_wait(semaphore, timeout) == 0;
+
+				if (!success) {
+					fprintf(stderr, "ERROR - openApplication timeout for %s\n", [bundleIdentifier UTF8String]);
+					return 1;
+				} else if (openApplicationErrorCode != BKSOpenApplicationErrorCodeNone) {
+					return 1;
+				} else {
+					pid = getPID(executableName);
+					if (pid == -1) {
+						fprintf(stderr, "ERROR - could not launch App, pid not found for %s\n", [executableName UTF8String]);
+						return 1;
+					} else {
+						isCycriptRunning = isLocalPortOpen(8556);
+						fprintf(stderr, "Waiting for Cycript to become active...\n");
+						for (int i = 0; i < 5 && !isCycriptRunning; i++) {
+							[NSThread sleepForTimeInterval:1.0f];
+							isCycriptRunning = isLocalPortOpen(8556);
+						}
+
+						if (!isCycriptRunning) {
+							fprintf(stderr, "ERROR - could not connect to Cycript\n");
+							return 1;
+						} else {
+							fprintf(stderr, "Successfully enabled, you may now run\n    cycript -r 127.0.0.1:8556\n");
+						}
+					}
+				}
+
+				dispatch_release(semaphore);
+				[systemService release];
+				[options release];
 			} else {
-				pid = getPID(executableName);
+				if (executable) {
+					if ([executableName isEqualToString:@"backboardd"]) {
+						fprintf(stderr, "Waiting for backboardd to launch...\n");
+						pid = 0;
+						[NSThread sleepForTimeInterval:2.0f];
+					} else {
+						fprintf(stderr, "Waiting for Process to launch...\n");
+						pid = getPID(executableName);
+						for (int i = 0; i < 60 && pid == -1; i++) {
+							[NSThread sleepForTimeInterval:1.0f];
+							pid = getPID(executableName);
+						}
+					}
+				} else {
+					pid = 0;
+					fprintf(stderr, "Waiting for SpringBoard to launch...\n");
+					[NSThread sleepForTimeInterval:2.0f];
+				}
+
 				if (pid == -1) {
-					fprintf(stderr, "ERROR - could not launch App, pid not found for %s\n", [executableName UTF8String]);
-					retVal = 1;
+					fprintf(stderr, "ERROR - could not launch Process, pid not found for %s\n", [executableName UTF8String]);
+					return 1;
 				} else {
 					isCycriptRunning = isLocalPortOpen(8556);
 					fprintf(stderr, "Waiting for Cycript to become active...\n");
@@ -427,65 +516,68 @@ int main(int argc, char **argv, char **envp)
 
 					if (!isCycriptRunning) {
 						fprintf(stderr, "ERROR - could not connect to Cycript\n");
-						retVal = 1;
+						return 1;
 					} else {
-						fprintf(stderr, "Successfully enabled, you may now run\n    cycript -r 127.0.0.1:8556\n");
+						fprintf(stderr, "Success, you may now run\n    cycript -r 127.0.0.1:8556\n");
 					}
 				}
 			}
-
-			dispatch_release(semaphore);
-			[systemService release];
-			[options release];
 		} else {
-			if (executable) {
-				if ([executableName isEqualToString:@"backboardd"]) {
-					fprintf(stderr, "Waiting for backboardd to launch...\n");
-					pid = 0;
-					[NSThread sleepForTimeInterval:2.0f];
-				} else {
-					fprintf(stderr, "Waiting for Process to launch...\n");
-					pid = getPID(executableName);
-					for (int i = 0; i < 60 && pid == -1; i++) {
-						[NSThread sleepForTimeInterval:1.0f];
-						pid = getPID(executableName);
-					}
+			if ([NSFileManager.defaultManager fileExistsAtPath:enabledPath]) {
+				NSError *error = NULL;
+				BOOL result = YES;
+				if ([NSFileManager.defaultManager fileExistsAtPath:disabledPath]) {
+					// this might happen right after reinstalling the tweak
+					result = [NSFileManager.defaultManager removeItemAtPath:disabledPath error:&error];
 				}
-			} else {
-				pid = 0;
-				fprintf(stderr, "Waiting for SpringBoard to launch...\n");
-				[NSThread sleepForTimeInterval:2.0f];
+
+				result = [NSFileManager.defaultManager moveItemAtPath:enabledPath toPath:disabledPath error:&error];
+				if (!result) {
+					fprintf(stderr, "ERROR - setting up dylib file\n    (%ld) %s\n", error.code, [error.localizedDescription UTF8String]);
+					return 1;
+				}
 			}
 
-			if (pid == -1) {
-				fprintf(stderr, "ERROR - could not launch Process, pid not found for %s\n", [executableName UTF8String]);
-				retVal = 1;
-			} else {
-				isCycriptRunning = isLocalPortOpen(8556);
-				fprintf(stderr, "Waiting for Cycript to become active...\n");
-				for (int i = 0; i < 5 && !isCycriptRunning; i++) {
-					[NSThread sleepForTimeInterval:1.0f];
-					isCycriptRunning = isLocalPortOpen(8556);
-				}
+			pid_t p;
+			int lastpid = pid;
+			char pids[8];
+			sprintf(pids, "%d", pid);
+			char *argv[] = {"inject_criticald", pids, (char *)[disabledPath UTF8String], NULL};
+			posix_spawn(&p, "/electra/inject_criticald", NULL, NULL, argv, NULL);
 
-				if (!isCycriptRunning) {
-					fprintf(stderr, "ERROR - could not connect to Cycript\n");
-					retVal = 1;
-				} else {
-					fprintf(stderr, "Success, you may now run\n    cycript -r 127.0.0.1:8556\n");
-				}
+			fprintf(stderr, "Waiting for injection process...\n");
+			[NSThread sleepForTimeInterval:2.0f];
+			pid = getPID(executableName);
+			if (lastpid != pid) {
+				fprintf(stderr, "ERROR - something went wrong with the injection process and the process crashed\n");
+				fprintf(stderr, "    It is much more reliable to use Tweak Mode (without the '-i' option)\n");
+				return 1;
+			}
+
+			isCycriptRunning = isLocalPortOpen(8556);
+			fprintf(stderr, "Waiting for Cycript to become active...\n");
+			for (int i = 0; i < 5 && !isCycriptRunning; i++) {
+				[NSThread sleepForTimeInterval:1.0f];
+				isCycriptRunning = isLocalPortOpen(8556);
+			}
+
+			if (!isCycriptRunning) {
+				fprintf(stderr, "ERROR - could not connect to Cycript\n");
+				return 1;
+			} else {
+				fprintf(stderr, "Success, you may now run\n    cycript -r 127.0.0.1:8556\n");
 			}
 		}
 	} else {
-		if ([NSFileManager.defaultManager fileExistsAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.dylib"]) {
+		if ([NSFileManager.defaultManager fileExistsAtPath:enabledPath]) {
 			NSError *error = NULL;
 			BOOL result = YES;
-			if ([NSFileManager.defaultManager fileExistsAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.disabled"]) {
+			if ([NSFileManager.defaultManager fileExistsAtPath:disabledPath]) {
 				// this might happen right after reinstalling the tweak
-				result = [NSFileManager.defaultManager removeItemAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.disabled" error:&error];
+				result = [NSFileManager.defaultManager removeItemAtPath:disabledPath error:&error];
 			}
 
-			result = [NSFileManager.defaultManager moveItemAtPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.dylib" toPath:@"/Library/MobileSubstrate/DynamicLibraries/cycriptListener.disabled" error:&error];
+			result = [NSFileManager.defaultManager moveItemAtPath:enabledPath toPath:disabledPath error:&error];
 			if (!result) {
 				fprintf(stderr, "ERROR - disabling dylib file\n    (%ld) %s\n", error.code, [error.localizedDescription UTF8String]);
 				return 1;
@@ -508,7 +600,7 @@ int main(int argc, char **argv, char **envp)
 
 				if (isCycriptRunning) {
 					fprintf(stderr, "ERROR - Cycript is still running\n    %s was killed\n", [executableName UTF8String]);
-					retVal = 1;
+					return 1;
 				} else {
 					fprintf(stderr, "Successfully disabled\n    %s was killed\n", [executableName UTF8String]);
 				}
@@ -520,5 +612,5 @@ int main(int argc, char **argv, char **envp)
 		}
 	}
 
-	return retVal;
+	return 0;
 }

@@ -19,15 +19,15 @@ It is meant to be used alongside [cycriptListenerTweak](https://github.com/tateu
 	# download http://apt.saurik.com/debs/cycript_0.9.594_iphoneos-arm.deb
 	# download https://electrarepo64.coolstar.org/debs/ldid_2_1.2.2-coolstar_iphoneos-arm.deb
 	# download http://www.tateu.net/repo/files/net.tateu.cycriptlistenertweak_1.0.0_iphoneos-arm.deb
-	# download http://www.tateu.net/repo/files/net.tateu.cyrun_1.0.3_iphoneos-arm.deb
+	# download http://www.tateu.net/repo/files/net.tateu.cyrun_1.0.4_iphoneos-arm.deb
 	dpkg -i ncurses_6.1_iphoneos-arm.deb
 	dpkg -i readline_6.0-8_iphoneos-arm.deb
 	dpkg -i cycript_0.9.594_iphoneos-arm.deb
 	dpkg -i ldid_2_1.2.2-coolstar_iphoneos-arm.deb
 	dpkg -i net.tateu.cycriptlistenertweak_1.0.0_iphoneos-arm.deb
-	dpkg -i net.tateu.cyrun_1.0.3_iphoneos-arm.deb
+	dpkg -i net.tateu.cyrun_1.0.4_iphoneos-arm.deb
 
-The newest versions of cyrun and cycriptlistenertweak can be found on [my repo in Cydia](http://www.tateu.net/repo/).
+The newest versions of cyrun and cycriptListenerTweak can be found on [my repo in Cydia](http://www.tateu.net/repo/).
 
 And then you can use the bash script to sign the Cycript binaries with the correct Electra entitlements
 

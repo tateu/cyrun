@@ -32,6 +32,15 @@ do
 		force=YES
 		shift
 		;;
+		-p|--path)
+		tweakFolderPath="$2"
+		shift
+		shift
+		;;
+		-i|--inject)
+		inject=YES
+		shift
+		;;
 		-h|--help)
 		help=YES
 		shift
@@ -57,17 +66,26 @@ set -- "${POSITIONAL[@]}" # restore positional parameters
 if [ "$help" == "YES" ]; then
 	echo "Usage:"
 	echo "    -b <AppBundleID>        - Bundle Identifier of the Application"
-	echo "                                \"com.apple.MobileSMS\""
+	echo "                                'com.apple.MobileSMS'"
 	echo "    -n <AppName>            - Application Name, ExecutableName, IconName or LocalizedName"
-	echo "                                \"Messages\""
+	echo "                                'Messages'"
 	echo "    -x <ExecutableName>     - Executable Name"
-	echo "                                \"backboardd\""
+	echo "                                'backboardd'"
 	echo "    -e                      - Enable Cycript for the given Process"
-	echo "                                Then, if it is an App, restart it"
-	echo "    -d                      - Disable Cycript for the given Process"
-	echo "                                Then, if it is an App, restart it"
+	echo "                                If running in Tweak Mode, kill the Process"
+	echo "                                    Then, if it is an App, restart it"
+	echo "                                If running in Inject Mode (Experimental),"
+	echo "                                    directly inject cycriptListener.dylib"
+	echo "    -d                      - Disable Cycript for the given Process by killing the Process"
+	echo "                                and disabling cycriptListener.dylib"
 	echo "                            If both enable and disable are set,"
-	echo "                                Cycript will be loaded and then unloaded when done"
+	echo "                                Cycript will be enabled and then disabled after exiting"
+	echo "    -f                      - Run without asking for confirmation"
+	echo "    -p <TweakFolderPath>    - Full path to the MobileSubstrate tweak folder"
+	echo "                                default value is '/Library/MobileSubstrate/DynamicLibraries'"
+	echo "    -i                      - Use inject_criticald to load Cycript, instead of the default TweakMode"
+	echo "                                This will inject Cycript without having to kill the Process first."
+	echo "                                However, this is experimental and seems to fail often and crash the Process"
 	echo "    -c </path/to/script.cy> - Load an external Cycript script"
 	echo "    -s                      - Sign the Cycript binaries with entitlements for Electra iOS 11"
 	echo "    -h                      - This help file"
@@ -166,6 +184,14 @@ if [ "$force" == "YES" ]; then
 	cmd="$cmd -f"
 fi
 
+if [ "$tweakFolderPath" != "" ]; then
+	cmd="$cmd -p $tweakFolderPath"
+fi
+
+if [ "$inject" == "YES" ]; then
+	cmd="$cmd -i"
+fi
+
 `$cmd`
 retVal=$?
 
@@ -192,6 +218,14 @@ if [ "$retVal" == "0" ] && [ "$enable" == "YES" ]; then
 
 		if [ "$force" == "YES" ]; then
 			cmd="$cmd -f"
+		fi
+
+		if [ "$tweakFolderPath" != "" ]; then
+			cmd="$cmd -p $tweakFolderPath"
+		fi
+
+		if [ "$inject" == "YES" ]; then
+			cmd="$cmd -i"
 		fi
 
 		`$cmd`
