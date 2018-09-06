@@ -382,6 +382,7 @@ int main(int argc, char **argv, char **envp)
 
 			if (line[0] != 'y' && line[0] != 'Y') {
 				fprintf(stderr, "Ok, cancelled\n");
+				fprintf(stderr, "    You can probably disable Cycript with\n    cyrun -%s %s -d\n", filterType == filterTypeBundle ? "b" : "x", [[filterFileObjectList objectAtIndex:0] UTF8String]);
 				return 1;
 			} else {
 				fprintf(stderr, "Success, You may now run\n    cycript -r 127.0.0.1:8556\n");
