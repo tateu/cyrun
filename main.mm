@@ -349,6 +349,45 @@ int main(int argc, char **argv, char **envp)
 				}
 			}
 		}
+	} else if (enable && isCycriptRunning) {
+		BOOL match = YES;
+		if (executable || !tweakMode) {
+			if (filterFileObjectList && ![executableName isEqualToString:[filterFileObjectList objectAtIndex:0]]) {
+				fprintf(stderr, "WARNING - Cycript is active but it looks like the executableName you are trying to enable it for does not match!\n");
+				match = NO;
+			}
+		} else {
+			if (filterFileObjectList) {
+				if (filterType == filterTypeBundle && ![bundleIdentifier isEqualToString:[filterFileObjectList objectAtIndex:0]]) {
+					fprintf(stderr, "WARNING - Cycript is active but it looks like the bundleIdentifier you are trying to enable it for does not match!\n");
+					match = NO;
+				} else if (filterType == filterTypeExecutable && ![executableName isEqualToString:[filterFileObjectList objectAtIndex:0]]) {
+					fprintf(stderr, "WARNING - Cycript is active but it looks like the executableName you are trying to enable it for does not match!\n");
+					match = NO;
+				}
+			}
+		}
+		if (match) {
+			fprintf(stderr, "Success, Cycript was already active for the Process. You may now run\n    cycript -r 127.0.0.1:8556\n");
+			return 0;
+		} else {
+			fprintf(stderr, "    You cannot enable Cycript in a new Process while it is still running in old one\n");
+			fprintf(stderr, "Do you want to connect to the current Process (y or n)? ");
+
+			char line[10];
+			if (fgets(line, sizeof(line), stdin) == NULL) {
+				printf("ERROR - Input.\n");
+				return 1;
+			}
+
+			if (line[0] != 'y' && line[0] != 'Y') {
+				fprintf(stderr, "Ok, cancelled\n");
+				return 1;
+			} else {
+				fprintf(stderr, "Success, You may now run\n    cycript -r 127.0.0.1:8556\n");
+				return 0;
+			}
+		}
 	}
 
 	if (!tweakMode && pid == -1 && enable) {
@@ -356,12 +395,6 @@ int main(int argc, char **argv, char **envp)
 		return 1;
 	} else if (executable && pid == -1 && enable) {
 		fprintf(stderr, "WARNING - You are trying to enable Cycript for an executable that is not running. Cyrun cannot confirm whether or not this is valid!\n");
-	}
-
-	if (enable && isCycriptRunning) {
-		fprintf(stderr, "ERROR - Cannot enable because Cycript is already active\n");
-		fprintf(stderr, "    You can probably disable it with\n    cyrun -%s %s -d\n", filterType == filterTypeBundle ? "b" : "x", [[filterFileObjectList objectAtIndex:0] UTF8String]);
-		return 1;
 	}
 
 	if (!force) {
